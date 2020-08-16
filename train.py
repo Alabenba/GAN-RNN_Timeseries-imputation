@@ -29,8 +29,7 @@ def process_series(batch, params):
     sample = np.random.choice(X_batch.shape[0], size=np.min([X_batch.shape[0], params['batch_size']]), replace = False)
     X_batch = X_batch[ sample,:,: ]
     Y_batch = np.copy(X_batch[:,:,0])
-    # X_batch[:,:,0] = deterioration.apply(X_batch[:,:,0], params)
-    # X_batch[ np.isnan(X_batch) ] = params['placeholder_value']
+
     mask = deterioration.mask(X_batch[:,:,0], params)
     X_batch[:,:,0] = np.where(mask==1, params['placeholder_value'], X_batch[:,:,0])
 
@@ -55,7 +54,8 @@ def train_vanilla_seq2seq(model, params):
 
         with tf.GradientTape() as tape:
             current_loss = tf.reduce_mean(tf.math.abs(
-                tf.math.multiply(model(X_batch), mask) - tf.math.multiply(Y_batch, mask)))
+                tf.math.multiply(model(X_batch), mask) - tf.math.multiply(Y_batch, mask)
+            ))
         gradients = tape.gradient(current_loss, model.trainable_variables)
         optimizer.apply_gradients(zip(gradients, model.trainable_variables))
         return current_loss
@@ -138,14 +138,14 @@ def train_GAN(generator, discriminator, params):
         return loss_fakes + loss_reals
 
     @tf.function
-    def train_step(X_batch, real_example):
+    def train_step(X_batch, real_example, mask):
         with tf.GradientTape() as generator_tape, tf.GradientTape() as discriminator_tape:
 
             generator_imputation = generator(X_batch)
-
             # that's complex: it prepares an imputed batch for the Discriminator. It removes the first
             # variable (at [:,:,0]) that is the deteriorated trend, and puts the imputation made by the Generator
-            generator_imputation = tf.concat([ generator_imputation, X_batch[:,:,1:] ], axis=-1)
+            # this imputation is then multiplied by the mask matrix (its shape adjusted for compatibility)
+            generator_imputation = tf.concat([ tf.math.multiply(generator_imputation, tf.expand_dims(mask, axis=-1)), X_batch[:,:,1:] ], axis=-1)
 
             discriminator_guess_fakes = discriminator(generator_imputation)
             discriminator_guess_reals = discriminator(real_example)
@@ -189,9 +189,8 @@ def train_GAN(generator, discriminator, params):
             real_example = tools.RNN_multivariate_processing(array=real_example, len_input=params['len_input'])
             sample = np.random.choice(real_example.shape[0], size=np.min([real_example.shape[0], params['batch_size']]), replace=False)
             real_example = real_example[sample,:,:]
-            # real_example = np.expand_dims(real_example, axis=-1)
 
-            generator_current_loss, discriminator_current_loss = train_step(X_batch, real_example)
+            generator_current_loss, discriminator_current_loss = train_step(X_batch, real_example, mask)
 
             if iteration % 100 == 0:
 
@@ -252,25 +251,26 @@ def train_partial_GAN(generator, discriminator, params):
     generator_optimizer = tf.keras.optimizers.Adam(learning_rate = params['learning_rate'])
     discriminator_optimizer = tf.keras.optimizers.Adam(learning_rate = params['learning_rate'])
 
-    @tf.function
+    # @tf.function
     def train_step(X_batch, Y_batch, real_example, mask, w):
         with tf.GradientTape() as generator_tape, tf.GradientTape() as discriminator_tape:
+            mask = tf.expand_dims(mask, axis=-1)
 
             generator_imputation = generator(X_batch)
             # that's complex: it prepares an imputed batch for the Discriminator. It removes the first
             # variable (at [:,:,0]) that is the deteriorated trend, and puts the imputation made by the Generator
-            generator_imputation = tf.concat([ generator_imputation, X_batch[:,:,1:] ], axis=-1)
-
+            # this imputation is then multiplied by the mask matrix
+            generator_imputation = tf.concat([ tf.math.multiply(generator_imputation, mask), X_batch[:,:,1:] ], axis=-1)
             discriminator_guess_fakes = discriminator(generator_imputation)
+
+            # Apply same mask multiplication also to Reals
+            real_example = tf.concat([ tf.expand_dims(tf.math.multiply(real_example[:,:,0], tf.squeeze(mask)), axis=-1), real_example[:,:,1:] ], axis=-1)
             discriminator_guess_reals = discriminator(real_example)
 
             # Generator loss
-            mask = tf.expand_dims(mask, axis=-1)
             g_loss_mae = tf.reduce_mean(tf.math.abs(
                 tf.math.multiply(generator(X_batch), mask) - tf.math.multiply(Y_batch, mask)))
             g_loss_gan = cross_entropy(tf.ones_like(discriminator_guess_fakes), discriminator_guess_fakes)
-
-            # tf.print('mae:', g_loss_mae, '; gan:', g_loss_gan)
 
             generator_current_loss = g_loss_mae + (g_loss_gan * w)  # magnitude of GAN loss to be adjusted
 
@@ -331,7 +331,8 @@ def train_partial_GAN(generator, discriminator, params):
                 # To get Generative and Aversarial Losses (and binary accuracy)
                 # for Generator simply repeat what's in train_step() above
                 generator_imputation = generator(X_batch)
-                generator_imputation = tf.concat([ generator_imputation, X_batch[:,:,1:] ], axis=-1)
+                generator_imputation = tf.concat([ tf.math.multiply(generator_imputation, tf.expand_dims(mask, axis=-1)), X_batch[:,:,1:] ], axis=-1)
+                real_example = tf.concat([ tf.expand_dims(tf.math.multiply(real_example[:,:,0], mask), axis=-1), real_example[:,:,1:] ], axis=-1)
                 discriminator_guess_reals = discriminator(real_example)
                 discriminator_guess_fakes = discriminator(generator_imputation)
 
