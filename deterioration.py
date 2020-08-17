@@ -53,7 +53,7 @@ def _blank_random_interval(x, min_size, max_size):
 #     return X
 
 
-def mask(X, params):
+def mask(X_shape, params):
     '''
     Iterates apply_on_series() on all rows of a Mask matrix. This matrix informs
     the location of NaN's in training batches with values {0: real, 1: NaN}
@@ -75,5 +75,6 @@ def mask(X, params):
             x[ where:where+params['size_nan'] ] = 1
         return x
 
-    mask = np.apply_along_axis(apply_on_series, 1, np.zeros(X.shape))
-    return mask.astype(np.float32)
+    mask = np.apply_along_axis(apply_on_series, 1, np.zeros(X_shape))
+    mask = mask.astype(np.float32)
+    return mask

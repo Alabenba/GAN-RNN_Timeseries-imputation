@@ -30,7 +30,12 @@ def process_series(batch, params):
     X_batch = X_batch[ sample,:,: ]
     Y_batch = np.copy(X_batch[:,:,0])
 
-    mask = deterioration.mask(X_batch[:,:,0], params)
+    # Mask quarter and year lags
+    X_batch[:,:,1] = np.where(deterioration.mask(X_batch[:,:,0].shape, params), params['placeholder_value'], X_batch[:,:,1])
+    X_batch[:,:,2] = np.where(deterioration.mask(X_batch[:,:,0].shape, params), params['placeholder_value'], X_batch[:,:,2])
+
+    # Then mask main trend too
+    mask = deterioration.mask(X_batch[:,:,0].shape, params)
     X_batch[:,:,0] = np.where(mask==1, params['placeholder_value'], X_batch[:,:,0])
 
     Y_batch = np.expand_dims(Y_batch, axis=-1)
